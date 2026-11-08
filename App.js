@@ -565,7 +565,20 @@ export default function App() {
         videoId: selectedTrack.videoId,
         width: '100%',
         height: '100%',
-        playerVars: { autoplay: 1, controls: 0, rel: 0, modestbranding: 1, playsinline: 1 },
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          rel: 0,
+          modestbranding: 1,
+          playsinline: 1,
+          disablekb: 1,
+          iv_load_policy: 3,
+          cc_load_policy: 0,
+          fs: 0,
+          loop: 1,
+          playlist: selectedTrack.videoId,
+          origin: window.location.origin,
+        },
         events: {
           onReady: (event) => {
             if (cancelled) return;
@@ -776,19 +789,27 @@ export default function App() {
 
   const togglePlay = async () => {
     if (ytActive && ytRef.current) {
-      try {
-        const state = ytRef.current.getPlayerState();
-        if (state === 1) {
-          ytRef.current.pauseVideo();
-          setIsPlaying(false);
-        } else {
-          ytRef.current.playVideo();
-          setIsPlaying(true);
+      const player = ytRef.current;
+      const iframe = (typeof player.getIframe === 'function') ? player.getIframe() : null;
+      const alive = !iframe || (typeof document === 'undefined' || document.contains(iframe));
+      if (!alive) {
+        // Player is stale — reset and fall through
+        ytRef.current = null;
+        setYtActive(false);
+      } else {
+        try {
+          if (isPlaying) {
+            if (typeof player.pauseVideo === 'function') player.pauseVideo();
+            setIsPlaying(false);
+          } else {
+            if (typeof player.playVideo === 'function') player.playVideo();
+            setIsPlaying(true);
+          }
+        } catch (e) {
+          console.log('yt toggle error', e);
         }
-      } catch (e) {
-        console.log('yt toggle error', e);
+        return;
       }
-      return;
     }
     try {
       if (soundRef.current) {
@@ -1121,7 +1142,6 @@ export default function App() {
               const x = e && e.nativeEvent ? e.nativeEvent.locationX : null;
               if (width > 0 && x != null) seekToRatio(x / width);
             }}
-            {...(isWeb ? { onMouseDown: onProgressMouseDown } : {})}
           >
             <View style={styles.progressBg}>
               <View style={[styles.progressFill, { width: `${Math.min(100, progress * 100)}%` }]} />
@@ -1411,11 +1431,11 @@ const styles = StyleSheet.create({
   pairInput: { flex: 1, backgroundColor: '#09090b', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 15, borderWidth: 1, borderColor: '#3f3f46' },
   primaryBtnSm: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 13 },
   primaryBtnTextSm: { color: '#000', fontSize: 14, fontWeight: '700' },
-  bigPlay: { backgroundColor: '#fff', borderRadius: 38, width: 76, height: 76, alignItems: 'center', justifyContent: 'center' },
-  videoStage: { width: '100%', maxWidth: 360, height: 202, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000', marginBottom: 24 },
-  videoStageMax: { width: '100%', height: '100%', borderRadius: 0, overflow: 'visible' },
+  bigPlay: { backgroundColor: '#fff', borderRadius: 38, width: 76, height: 76, alignItems: 'center', justifyContent: 'center', zIndex: 10 },
+  videoStage: { width: '100%', maxWidth: 360, height: 202, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000', marginBottom: 24, position: 'relative' },
+  videoStageMax: { width: '100%', height: '100%', borderRadius: 0, overflow: 'visible', position: 'relative' },
   maxBtn: { alignSelf: 'flex-end', marginBottom: 8 },
   maxFullscreenBtn: { position: 'absolute', bottom: 24, right: 24, backgroundColor: '#18181b', borderRadius: 99, padding: 8, borderWidth: 1, borderColor: '#27272a' },
-  metaBlock: { width: '100%' },
+  metaBlock: { width: '100%', position: 'relative', zIndex: 5 },
   metaHidden: { display: 'none' },
 });
