@@ -1030,6 +1030,21 @@ export default function App() {
               </DragCarousel>
             </View>
           )}
+
+          <View>
+            <Text style={styles.sectionTitle}>Últimas buscas</Text>
+            <DragCarousel>
+              {[...history].sort((a, b) => (b.last || 0) - (a.last || 0)).slice(0, 10).map((t, idx) => (
+                <MusicCard
+                  key={`s-${t.id}-${idx}`}
+                  {...t}
+                  faved={isFav(t)}
+                  onToggleFav={() => toggleFav(t)}
+                  onPress={() => handleCardPress(t)}
+                />
+              ))}
+            </DragCarousel>
+          </View>
         </ScrollView>
       )}
 
@@ -1142,6 +1157,7 @@ export default function App() {
               const x = e && e.nativeEvent ? e.nativeEvent.locationX : null;
               if (width > 0 && x != null) seekToRatio(x / width);
             }}
+            {...(isWeb ? { onMouseDown: onProgressMouseDown } : {})}
           >
             <View style={styles.progressBg}>
               <View style={[styles.progressFill, { width: `${Math.min(100, progress * 100)}%` }]} />
@@ -1155,9 +1171,16 @@ export default function App() {
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.bigPlay} onPress={togglePlay}>
-            {isPlaying ? <Pause color="#000" size={40} fill="#000" /> : <Play color="#000" size={40} fill="#000" />}
-          </TouchableOpacity>
+          <View style={styles.lastSearchesBlock}>
+            <Text style={styles.lastSearchesTitle}>Últimas buscas</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.lastSearchesScroll}>
+              {[...history].sort((a, b) => (b.last || 0) - (a.last || 0)).slice(0, 10).map((t, idx) => (
+                <TouchableOpacity style={styles.lastSearchesCard} key={`l-${t.id}-${idx}`} onPress={() => handleCardPress(t)} activeOpacity={0.9}>
+                  <Image source={{ uri: t.cover }} style={styles.lastSearchesImg} />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
 
           {isWeb && selectedTrack && selectedTrack.videoId ? (
             <Text style={styles.videoHint}>Vídeo real do YouTube</Text>
@@ -1180,12 +1203,16 @@ export default function App() {
             </TouchableOpacity>
             <VolumeSlider value={volume} onChange={setVolume} />
           </View>
-          <TouchableOpacity style={styles.expandBtn} onPress={() => setPlayerOpen(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <ChevronUp color="#e4e4e7" size={20} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.playButton} onPress={togglePlay}>
-            {isPlaying ? <Pause color="#000" size={20} fill="#000" /> : <Play color="#000" size={20} fill="#000" />}
-          </TouchableOpacity>
+          <View style={styles.recentRow}>
+            <Text style={styles.recentTitle}>Últimas buscas</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recentScroll}>
+              {[...history].sort((a, b) => (b.last || 0) - (a.last || 0)).slice(0, 10).map((t, idx) => (
+                <TouchableOpacity style={styles.recentCard} key={`m-${t.id}-${idx}`} onPress={() => handleCardPress(t)} activeOpacity={0.9}>
+                  <Image source={{ uri: t.cover }} style={styles.recentImg} />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
           <TouchableOpacity style={styles.closeMini} onPress={closeMini} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <X color="#a1a1aa" size={18} />
           </TouchableOpacity>
@@ -1438,4 +1465,14 @@ const styles = StyleSheet.create({
   maxFullscreenBtn: { position: 'absolute', bottom: 24, right: 24, backgroundColor: '#18181b', borderRadius: 99, padding: 8, borderWidth: 1, borderColor: '#27272a' },
   metaBlock: { width: '100%', position: 'relative', zIndex: 5 },
   metaHidden: { display: 'none' },
+  lastSearchesBlock: { width: '100%', marginTop: 14 },
+  lastSearchesTitle: { color: '#71717a', fontSize: 11, marginBottom: 8, marginLeft: 4 },
+  lastSearchesScroll: { height: 76 },
+  lastSearchesCard: { width: 72, height: 72, marginRight: 12, borderRadius: 12, overflow: 'hidden', backgroundColor: '#27272a' },
+  lastSearchesImg: { width: 72, height: 72 },
+  recentRow: { flexDirection: 'row', alignItems: 'center', marginLeft: 8, marginRight: 4 },
+  recentTitle: { color: '#71717a', fontSize: 10, marginRight: 6 },
+  recentScroll: { height: 42 },
+  recentCard: { width: 52, height: 52, marginRight: 8, borderRadius: 10, overflow: 'hidden', backgroundColor: '#27272a' },
+  recentImg: { width: 52, height: 52 },
 });
