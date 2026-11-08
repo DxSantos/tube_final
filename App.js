@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, TextInput, SafeAreaView, Image } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Search, Home, Library, Compass } from 'lucide-react-native';
+import { Search, Home, Library, Compass, Play, Pause } from 'lucide-react-native';
+import { Audio } from 'expo-av';
+
+const DEMO_MP3 = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+const API_KEY = 'AIzaSyCrunfLfTcyCsR3u-1luag_Zg1emu9sWZw';
 
 const MusicCard = ({ title, artist, cover, active, onPress }) => (
   <TouchableOpacity style={styles.card} onPress={onPress}>
@@ -16,18 +20,68 @@ const MusicCard = ({ title, artist, cover, active, onPress }) => (
 export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTrack, setSelectedTrack] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [results, setResults] = useState([]);
+  const soundRef = useRef(null);
 
-  const quickPlays = [
+  const playSound = async (track) => {
+    try {
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync();
+      }
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: track?.url || DEMO_MP3 },
+        { shouldPlay: true }
+      );
+      soundRef.current = sound;
+      setSelectedTrack(track);
+      setIsPlaying(true);
+    } catch (e) {
+      console.log('audio error', e);
+    }
+  };
+
+  const togglePlay = async () => {
+    try {
+      if (soundRef.current) {
+        const status = await soundRef.current.getStatusAsync();
+        if (status.isPlaying) {
+          await soundRef.current.pauseAsync();
+          setIsPlaying(false);
+        } else {
+          await soundRef.current.playAsync();
+          setIsPlaying(true);
+        }
+      }
+    } catch (e) {
+      console.log('pause/play error', e);
+    }
+  };
+
+  const search = async () => {
+    if (!searchQuery.trim()) return;
+    try {
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoCategoryId=10&maxResults=20&q=${encodeURIComponent(searchQuery)}&key=${API_KEY}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      const items = (json.items || []).map(i => ({
+        id: i.id.videoId,
+        title: i.snippet.title,
+        artist: i.snippet.channelTitle,
+        cover: i.snippet.thumbnails.high.url,
+        url: DEMO_MP3,
+      }));
+      setResults(items);
+    } catch (e) {
+      console.log('search error', e);
+    }
+  };
+
+  const list = results.length ? results : [
     { id: '1', title: 'Lo-fi Hip Hop', artist: 'Chill Study', cover: 'https://picsum.photos/seed/music1/200' },
     { id: '2', title: 'Synthwave Night', artist: 'Retro Wave', cover: 'https://picsum.photos/seed/music2/200' },
     { id: '3', title: 'Deep Focus', artist: 'Ambient Music', cover: 'https://picsum.photos/seed/music3/200' },
     { id: '4', title: 'Workout Mix', artist: 'Gym Beast', cover: 'https://picsum.photos/seed/music4/200' },
-  ];
-
-  const recommended = [
-    { id: '6', title: 'Música Recomendada 1', artist: 'Artista Exemplo', cover: 'https://picsum.photos/seed/rec1/100' },
-    { id: '7', title: 'Música Recomendada 2', artist: 'Artista Exemplo', cover: 'https://picsum.photos/seed/rec2/100' },
-    { id: '8', title: 'Música Recomendada 3', artist: 'Artista Exemplo', cover: 'https://picsum.photos/seed/rec3/100' },
   ];
 
   return (
@@ -37,29 +91,15 @@ export default function App() {
         <View style={styles.searchContainer}>
           <Search color="#71717a" size={20} />
           <TextInput style={styles.searchInput} placeholder="Pesquisar músicas, artistas..." placeholderTextColor="#71717a" value={searchQuery} onChangeText={setSearchQuery} />
-          <TouchableOpacity style={styles.searchBtn}><Text style={styles.searchBtnText}>Buscar</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.searchBtn} onPress={search}><Text style={styles.searchBtnText}>Buscar</Text></TouchableOpacity>
         </View>
       </View>
 
       <ScrollView style={styles.content}>
         <Text style={styles.sectionTitle}>Ouvir agora</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
-          {quickPlays.map(t => <MusicCard key={t.id} {...t} active={selectedTrack?.id === t.id} onPress={() => setSelectedTrack(t)} />)}
+          {list.map(t => <MusicCard key={t.id} {...t} active={selectedTrack?.id === t.id} onPress={() => playSound(t)} />)}
         </ScrollView>
-
-        <Text style={styles.sectionTitle}>Recomendados</Text>
-        <View style={styles.recContainer}>
-          {recommended.map(t => (
-            <TouchableOpacity key={t.id} style={styles.recItem} onPress={() => setSelectedTrack(t)}>
-              <Image source={{ uri: t.cover }} style={styles.recImg} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.recTitle, selectedTrack?.id === t.id && { color: '#ef4444' }]} numberOfLines={1}>{t.title}</Text>
-                <Text style={styles.recArtist} numberOfLines={1}>{t.artist}</Text>
-              </View>
-              <Text style={{ color: '#71717a' }}>•••</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
       </ScrollView>
 
       {selectedTrack && (
@@ -69,7 +109,9 @@ export default function App() {
             <Text style={styles.miniTitle}>{selectedTrack.title}</Text>
             <Text style={styles.miniArtist}>{selectedTrack.artist}</Text>
           </View>
-          <TouchableOpacity style={styles.playButton}><Text style={{ color: '#000', fontWeight: 'bold' }}>PLAY</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.playButton} onPress={togglePlay}>
+            {isPlaying ? <Pause color="#000" size={20} fill="#000" /> : <Play color="#000" size={20} fill="#000" />}
+          </TouchableOpacity>
         </View>
       )}
 
