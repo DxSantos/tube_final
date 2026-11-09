@@ -1,0 +1,14 @@
+# Render Blueprint — deploy do backend TubeDX em 1 clique
+# Guia completo: backend/README.md
+services:
+  - type: web
+    name: tubedx-audio
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    env: production
+    healthCheckPath: /health
+    numInstances: 1
+    # NOTA: no plano gratuito o Render desliga o serviço após ~15 min sem uso.
+    # A primeira chamada demora ~50 segundos para acordar (o app usa timeout de 20s
+    # e cai para o MP3 demo se o backend não responder).

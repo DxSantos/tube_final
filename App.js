@@ -2,10 +2,44 @@ import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, TextInput, SafeAreaView, Image, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Search, Compass, Play, Pause, Volume2, VolumeX, ChevronUp, ChevronDown, Music, Cast, User, LogOut, RefreshCw, Check, Link2, Heart, Home, Library, X, Maximize2, Minimize2 } from 'lucide-react-native';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DEMO_MP3 = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
 const API_KEY = 'AIzaSyCrunfLfTcyCsR3u-1luag_Zg1emu9sWZw';
+
+// URL do backend de extração de áudio (pasta backend/ deste projeto).
+// Emulador Android (Pixel): 'http://10.0.2.2:3001'   <- uso atual
+// Celular na mesma rede Wi-Fi: 'http://<IP-DO-PC>:3001'
+// Deploy público: 'https://seu-backend.onrender.com'
+// Vazio ('') desativa (cai para o MP3 demo no Android).
+const BACKEND_URL = 'http://10.0.2.2:3001'; // emulador testando agora
+
+const audioStreamCache = new Map();
+
+const getAudioStreamUrl = async (videoId) => {
+  if (!BACKEND_URL || !videoId) return null;
+  if (audioStreamCache.has(videoId)) return audioStreamCache.get(videoId);
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), 20000) : null;
+  try {
+    const res = await fetch(`${BACKEND_URL}/audio?videoId=${encodeURIComponent(videoId)}`, {
+      signal: controller ? controller.signal : undefined,
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const url = json && json.url;
+    if (typeof url === 'string' && url) {
+      audioStreamCache.set(videoId, url);
+      return url;
+    }
+  } catch (e) {
+    console.log('getAudioStreamUrl error', e);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+  return null;
+};
 
 const isWeb = Platform.OS === 'web';
 
@@ -32,11 +66,83 @@ const loadYTApi = () => {
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
 const HISTORY_KEY = 'tube_dx_search_history_v1';
+const USER_KEY = 'tube_dx_user_v1';
+const PAIR_KEY = 'tube_dx_pair_v1';
+const FAV_KEY = 'tube_dx_favs_v1';
+const REC_KEY = 'tube_dx_recent_v1';
 
-const loadHistory = () => {
+let storageAvailable = null;
+const checkStorage = () => {
+  if (storageAvailable !== null) return storageAvailable;
+  if (!isWeb || typeof localStorage === 'undefined') {
+    storageAvailable = false;
+    return false;
+  }
   try {
-    if (typeof localStorage === 'undefined') return [];
-    const raw = localStorage.getItem(HISTORY_KEY);
+    localStorage.setItem('__tube_dx_test__', '1');
+    const v = localStorage.getItem('__tube_dx_test__');
+    localStorage.removeItem('__tube_dx_test__');
+    storageAvailable = (v === '1');
+    return storageAvailable;
+  } catch (e) {
+    storageAvailable = false;
+    return false;
+  }
+};
+
+const STORAGE_KEYS = {
+  history: HISTORY_KEY,
+  user: USER_KEY,
+  pair: PAIR_KEY,
+  favs: FAV_KEY,
+  recent: REC_KEY,
+};
+
+const memStore = {};
+
+const nativeAvailable = !isWeb && typeof AsyncStorage !== 'undefined'
+  && typeof AsyncStorage.getItem === 'function';
+
+const storageGet = async (key) => {
+  if (!isWeb && nativeAvailable) {
+    try {
+      return await AsyncStorage.getItem(key);
+    } catch (e) {
+      console.log('storageGet error', e);
+      return null;
+    }
+  }
+  if (!checkStorage()) return memStore[key] || null;
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    return memStore[key] || null;
+  }
+};
+
+const storageSet = async (key, value) => {
+  if (!isWeb && nativeAvailable) {
+    try {
+      if (value == null) await AsyncStorage.removeItem(key);
+      else await AsyncStorage.setItem(key, value);
+    } catch (e) {
+      console.log('storageSet error', e);
+    }
+    return;
+  }
+  memStore[key] = value;
+  if (!checkStorage()) return;
+  try {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch (e) {
+    console.log('storageSet error', e);
+  }
+};
+
+const loadHistory = async () => {
+  const raw = await storageGet(HISTORY_KEY);
+  try {
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
@@ -44,98 +150,108 @@ const loadHistory = () => {
   }
 };
 
-const saveHistory = (items) => {
+const saveHistory = (items) => storageSet(HISTORY_KEY, JSON.stringify(items));
+
+const loadUser = async () => {
+  const raw = await storageGet(USER_KEY);
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(items));
-    }
+    return raw ? JSON.parse(raw) : null;
   } catch (e) {
-    console.log('saveHistory error', e);
+    return null;
   }
 };
 
+const saveUser = (u) => storageSet(USER_KEY, u ? JSON.stringify(u) : null);
+
+const loadPair = async () => {
+  const raw = await storageGet(PAIR_KEY);
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+};
+
+const savePair = (p) => storageSet(PAIR_KEY, p ? JSON.stringify(p) : null);
+
+const loadFavs = async () => {
+  const raw = await storageGet(FAV_KEY);
+  try {
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+const saveFavs = (items) => storageSet(FAV_KEY, JSON.stringify(items));
+
+const loadRecent = async () => {
+  const raw = await storageGet(REC_KEY);
+  try {
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+const saveRecent = (items) => storageSet(REC_KEY, JSON.stringify(items));
+
+const APP_NAME = 'TubeDX';
+const APP_ICON = require('./assets/app-icon.png');
+const GOOGLE_CLIENT_ID = '450486634268-ur6ogci8ft1sh97q50uat4kdqhkr7bjk.apps.googleusercontent.com';
+
+const toTrack = (t) => ({
+  id: t.id,
+  videoId: t.videoId,
+  title: t.title,
+  artist: t.artist,
+  cover: t.cover,
+  url: t.url,
+});
+
+const decodeJwtToken = (token) => {
+  try {
+    const part = String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(part);
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+  } catch (e) {
+    console.log('jwt decode error', e);
+    return null;
+  }
+};
+
+const loadGoogleScript = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return Promise.resolve(null);
+  if (window.google && window.google.accounts && window.google.accounts.id) {
+    return Promise.resolve(window.google.accounts.id);
+  }
+  if (window.__tubeDxGsiPromise) return window.__tubeDxGsiPromise;
+  window.__tubeDxGsiPromise = new Promise((resolve) => {
+    const tag = document.createElement('script');
+    tag.src = 'https://accounts.google.com/gsi/client';
+    tag.async = true;
+    tag.defer = true;
+    tag.onload = () => resolve(window.google && window.google.accounts ? window.google.accounts.id : null);
+    tag.onerror = () => resolve(null);
+    document.head.appendChild(tag);
+  });
+  return window.__tubeDxGsiPromise;
+};
+
+const makePairCode = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return `${out.slice(0, 3)}-${out.slice(3)}`;
+};
+
 const DragCarousel = ({ children }) => {
-  const scrollRef = useRef(null);
-  const dragEndRef = useRef(0);
-
-  const getScrollLeft = () => {
-    const r = scrollRef.current;
-    if (!r) return 0;
-    try {
-      if (typeof r.getScrollableNode === 'function') {
-        const n = r.getScrollableNode();
-        if (n && typeof n.scrollLeft === 'number') return n.scrollLeft;
-      }
-      if (r._scrollRef && typeof r._scrollRef.scrollLeft === 'number') return r._scrollRef.scrollLeft;
-      if (typeof r.getScrollResponder === 'function') {
-        const responder = r.getScrollResponder();
-        if (responder && typeof responder.getScrollableNode === 'function') {
-          const n = responder.getScrollableNode();
-          if (n && typeof n.scrollLeft === 'number') return n.scrollLeft;
-        }
-      }
-    } catch (e) {
-      console.log('getScrollLeft error', e);
-    }
-    return 0;
-  };
-
-  const setScrollLeft = (x) => {
-    const r = scrollRef.current;
-    if (!r) return;
-    const target = Math.max(0, x);
-    try {
-      if (typeof r.scrollTo === 'function') {
-        r.scrollTo({ x: target, animated: false });
-        return;
-      }
-      if (typeof r.getScrollableNode === 'function') {
-        const n = r.getScrollableNode();
-        if (n) n.scrollLeft = target;
-      }
-    } catch (e) {
-      console.log('setScrollLeft error', e);
-    }
-  };
-
-  const onMouseDown = (e) => {
-    if (!isWeb || !e) return;
-    const ne = e.nativeEvent || e;
-    if (typeof e.preventDefault === 'function') e.preventDefault();
-    else if (typeof ne.preventDefault === 'function') ne.preventDefault();
-
-    dragEndRef.current = 0;
-    const startX = typeof ne.clientX === 'number' ? ne.clientX : 0;
-    const startLeft = getScrollLeft();
-    let moved = 0;
-
-    const onMove = (ev) => {
-      const dx = (ev.clientX || 0) - startX;
-      if (Math.abs(dx) > moved) moved = Math.abs(dx);
-      if (moved > 5) {
-        dragEndRef.current = Date.now();
-        window.__tubeDxLastDragAt = dragEndRef.current;
-      }
-      setScrollLeft(startLeft - dx);
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.style.userSelect = '';
-      if (moved > 5) {
-        dragEndRef.current = Date.now();
-        window.__tubeDxLastDragAt = dragEndRef.current;
-      }
-    };
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    document.body.style.userSelect = 'none';
-  };
-
   return (
-    <View style={styles.carouselWrap} {...(isWeb ? { onMouseDown } : {})}>
-      <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false}>
+    <View style={styles.carouselWrap}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {children}
       </ScrollView>
     </View>
@@ -189,141 +305,6 @@ const VolumeSlider = ({ value, onChange }) => {
       </View>
     </TouchableOpacity>
   );
-};
-
-const APP_NAME = 'TubeDX';
-const APP_ICON = require('./assets/app-icon.png');
-const GOOGLE_CLIENT_ID = '450486634268-ur6ogci8ft1sh97q50uat4kdqhkr7bjk.apps.googleusercontent.com';
-const USER_KEY = 'tube_dx_user_v1';
-const PAIR_KEY = 'tube_dx_pair_v1';
-
-const loadUser = () => {
-  try {
-    if (typeof localStorage === 'undefined') return null;
-    const raw = localStorage.getItem(USER_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch (e) {
-    return null;
-  }
-};
-
-const saveUser = (u) => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      if (u) localStorage.setItem(USER_KEY, JSON.stringify(u));
-      else localStorage.removeItem(USER_KEY);
-    }
-  } catch (e) {
-    console.log('saveUser error', e);
-  }
-};
-
-const loadPair = () => {
-  try {
-    if (typeof localStorage === 'undefined') return null;
-    const raw = localStorage.getItem(PAIR_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch (e) {
-    return null;
-  }
-};
-
-const savePair = (p) => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      if (p) localStorage.setItem(PAIR_KEY, JSON.stringify(p));
-      else localStorage.removeItem(PAIR_KEY);
-    }
-  } catch (e) {
-    console.log('savePair error', e);
-  }
-};
-
-const FAV_KEY = 'tube_dx_favs_v1';
-const REC_KEY = 'tube_dx_recent_v1';
-
-const loadFavs = () => {
-  try {
-    if (typeof localStorage === 'undefined') return [];
-    const raw = localStorage.getItem(FAV_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
-};
-
-const saveFavs = (items) => {
-  try {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(FAV_KEY, JSON.stringify(items));
-  } catch (e) {
-    console.log('saveFavs error', e);
-  }
-};
-
-const loadRecent = () => {
-  try {
-    if (typeof localStorage === 'undefined') return [];
-    const raw = localStorage.getItem(REC_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
-};
-
-const saveRecent = (items) => {
-  try {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(REC_KEY, JSON.stringify(items));
-  } catch (e) {
-    console.log('saveRecent error', e);
-  }
-};
-
-const toTrack = (t) => ({
-  id: t.id,
-  videoId: t.videoId,
-  title: t.title,
-  artist: t.artist,
-  cover: t.cover,
-  url: t.url,
-});
-
-const decodeJwtToken = (token) => {
-  try {
-    const part = String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const binary = atob(part);
-    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-    return JSON.parse(new TextDecoder('utf-8').decode(bytes));
-  } catch (e) {
-    console.log('jwt decode error', e);
-    return null;
-  }
-};
-
-const loadGoogleScript = () => {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return Promise.resolve(null);
-  if (window.google && window.google.accounts && window.google.accounts.id) {
-    return Promise.resolve(window.google.accounts.id);
-  }
-  if (window.__tubeDxGsiPromise) return window.__tubeDxGsiPromise;
-  window.__tubeDxGsiPromise = new Promise((resolve) => {
-    const tag = document.createElement('script');
-    tag.src = 'https://accounts.google.com/gsi/client';
-    tag.async = true;
-    tag.defer = true;
-    tag.onload = () => resolve(window.google && window.google.accounts ? window.google.accounts.id : null);
-    tag.onerror = () => resolve(null);
-    document.head.appendChild(tag);
-  });
-  return window.__tubeDxGsiPromise;
-};
-
-const makePairCode = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let out = '';
-  for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return `${out.slice(0, 3)}-${out.slice(3)}`;
 };
 
 const AppIcon = ({ size = 30 }) => {
@@ -392,17 +373,17 @@ export default function App() {
   const [status, setStatus] = useState(null);
   const [ytActive, setYtActive] = useState(false);
   const [ytTime, setYtTime] = useState({ current: 0, duration: 0 });
-  const [history, setHistory] = useState(() => loadHistory());
+  const [history, setHistory] = useState([]);
   const [volume, setVolume] = useState(0.8);
-  const [user, setUser] = useState(() => loadUser());
+  const [user, setUser] = useState(null);
   const [accountOpen, setAccountOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
-  const [pairState, setPairState] = useState(() => loadPair());
+  const [pairState, setPairState] = useState(null);
   const [joinCode, setJoinCode] = useState('');
   const [gsiReady, setGsiReady] = useState(false);
   const [gsiFailed, setGsiFailed] = useState(false);
-  const [favorites, setFavorites] = useState(() => loadFavs());
-  const [recent, setRecent] = useState(() => loadRecent());
+  const [favorites, setFavorites] = useState([]);
+  const [recent, setRecent] = useState([]);
   const [tab, setTab] = useState('home');
   const [miniVisible, setMiniVisible] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -434,17 +415,24 @@ export default function App() {
   };
 
   useEffect(() => {
+    setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'mixWithOthers',
+    }).catch((e) => console.log('audioMode error', e));
     return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync();
-      }
+      stopSound();
       destroyYt();
     };
   }, []);
 
   useEffect(() => {
     if (soundRef.current) {
-      soundRef.current.setVolumeAsync(volume).catch((e) => console.log('setVolume error', e));
+      try {
+        soundRef.current.volume = clamp01(volume);
+      } catch (e) {
+        console.log('setVolume error', e);
+      }
     }
     if (ytRef.current && typeof ytRef.current.setVolume === 'function') {
       try {
@@ -454,6 +442,14 @@ export default function App() {
       }
     }
   }, [volume]);
+
+  useEffect(() => {
+    loadHistory().then((items) => setHistory(items));
+    loadUser().then((u) => setUser(u));
+    loadPair().then((p) => setPairState(p));
+    loadFavs().then((items) => setFavorites(items));
+    loadRecent().then((items) => setRecent(items));
+  }, []);
 
   useEffect(() => {
     if (history.length) saveHistory(history);
@@ -623,10 +619,6 @@ export default function App() {
   }, [ytActive, isPlaying]);
 
   const handleCardPress = (track) => {
-    const lastDrag = (typeof window !== 'undefined' && window.__tubeDxLastDragAt) || 0;
-    if (lastDrag && Date.now() - lastDrag < 400) {
-      return;
-    }
     playSound(track);
   };
 
@@ -648,7 +640,7 @@ export default function App() {
       console.log('yt close error', e);
     }
     try {
-      if (soundRef.current) await soundRef.current.pauseAsync();
+      if (soundRef.current && typeof soundRef.current.pause === 'function') soundRef.current.pause();
     } catch (e) {
       console.log('sound close error', e);
     }
@@ -713,8 +705,6 @@ export default function App() {
 
   const toggleFav = (track) => {
     if (!track) return;
-    const lastDrag = (typeof window !== 'undefined' && window.__tubeDxLastDragAt) || 0;
-    if (lastDrag && Date.now() - lastDrag < 400) return;
     setFavorites((prev) => {
       const exists = prev.some((f) => f.id === track.id);
       if (exists) return prev.filter((f) => f.id !== track.id);
@@ -752,6 +742,36 @@ export default function App() {
     setPairState({ code: pairState && pairState.code ? pairState.code : makePairCode(), device: null });
   };
 
+  const applyAudioStatus = (s) => {
+    const pos = (typeof s.currentTime === 'number')
+      ? s.currentTime * 1000
+      : (typeof s.positionMillis === 'number' ? s.positionMillis : 0);
+    const dur = (typeof s.duration === 'number')
+      ? s.duration * 1000
+      : (typeof s.durationMillis === 'number' ? s.durationMillis : 0);
+    const playing = (typeof s.playing === 'boolean')
+      ? s.playing
+      : (typeof s.isPlaying === 'boolean' ? s.isPlaying : false);
+    setStatus({ positionMillis: pos, durationMillis: dur, isPlaying: playing });
+    if (typeof s.didJustFinish === 'boolean' && s.didJustFinish) setIsPlaying(false);
+  };
+
+  const stopSound = () => {
+    const p = soundRef.current;
+    if (!p) return;
+    try {
+      if (typeof p.pause === 'function') p.pause();
+    } catch (e) {
+      console.log('stopSound error', e);
+    }
+    try {
+      if (typeof p.remove === 'function') p.remove();
+    } catch (e) {
+      console.log('stopSound remove error', e);
+    }
+    soundRef.current = null;
+  };
+
   const playSound = async (track) => {
     const useVideo = isWeb && track && track.videoId;
     setRecent((prev) => {
@@ -760,10 +780,7 @@ export default function App() {
     });
     setMiniVisible(true);
     try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
-      }
+      stopSound();
       setStatus(null);
 
       if (useVideo) {
@@ -773,14 +790,29 @@ export default function App() {
         return;
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: (track && track.url) || DEMO_MP3 },
-        { shouldPlay: true, volume },
-        (onStatus) => setStatus(onStatus)
-      );
-      soundRef.current = sound;
+      let uri = (track && track.url) || DEMO_MP3;
+      if (track && track.videoId) {
+        const fetched = await getAudioStreamUrl(track.videoId);
+        if (fetched) uri = fetched;
+      }
+
+      const player = createAudioPlayer({ uri });
+      try {
+        player.volume = clamp01(volume);
+      } catch (e) {
+        console.log('set volume error', e);
+      }
+      if (typeof player.addListener === 'function') {
+        player.addListener('playbackStatusUpdate', applyAudioStatus);
+      }
+      soundRef.current = player;
       setSelectedTrack(track);
       setPlayerOpen(true);
+      try {
+        player.play();
+      } catch (e) {
+        console.log('play error', e);
+      }
       setIsPlaying(true);
     } catch (e) {
       console.log('audio error', e);
@@ -813,12 +845,11 @@ export default function App() {
     }
     try {
       if (soundRef.current) {
-        const s = await soundRef.current.getStatusAsync();
-        if (s.isPlaying) {
-          await soundRef.current.pauseAsync();
+        if (soundRef.current.playing) {
+          soundRef.current.pause();
           setIsPlaying(false);
         } else {
-          await soundRef.current.playAsync();
+          soundRef.current.play();
           setIsPlaying(true);
         }
       }
@@ -904,9 +935,12 @@ export default function App() {
       return;
     }
     if (soundRef.current && status && status.durationMillis) {
-      soundRef.current
-        .setPositionAsync(r * status.durationMillis)
-        .catch((e) => console.log('seek audio error', e));
+      const seconds = (r * status.durationMillis) / 1000;
+      if (typeof soundRef.current.seekTo === 'function') {
+        soundRef.current.seekTo(seconds).catch((e) => console.log('seek audio error', e));
+      } else if (typeof soundRef.current.setPositionAsync === 'function') {
+        soundRef.current.setPositionAsync(r * status.durationMillis).catch((e) => console.log('seek audio error', e));
+      }
     }
   };
 
@@ -1171,6 +1205,12 @@ export default function App() {
             </Text>
           </View>
 
+          <View style={styles.playRow}>
+            <TouchableOpacity style={styles.bigPlay} onPress={togglePlay}>
+              {isPlaying ? <Pause color="#000" size={40} fill="#000" /> : <Play color="#000" size={40} fill="#000" />}
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.lastSearchesBlock}>
             <Text style={styles.lastSearchesTitle}>Últimas buscas</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.lastSearchesScroll}>
@@ -1203,16 +1243,9 @@ export default function App() {
             </TouchableOpacity>
             <VolumeSlider value={volume} onChange={setVolume} />
           </View>
-          <View style={styles.recentRow}>
-            <Text style={styles.recentTitle}>Últimas buscas</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.recentScroll}>
-              {[...history].sort((a, b) => (b.last || 0) - (a.last || 0)).slice(0, 10).map((t, idx) => (
-                <TouchableOpacity style={styles.recentCard} key={`m-${t.id}-${idx}`} onPress={() => handleCardPress(t)} activeOpacity={0.9}>
-                  <Image source={{ uri: t.cover }} style={styles.recentImg} />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
+          <TouchableOpacity style={styles.playButton} onPress={togglePlay}>
+            {isPlaying ? <Pause color="#000" size={20} fill="#000" /> : <Play color="#000" size={20} fill="#000" />}
+          </TouchableOpacity>
           <TouchableOpacity style={styles.closeMini} onPress={closeMini} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <X color="#a1a1aa" size={18} />
           </TouchableOpacity>
@@ -1475,4 +1508,6 @@ const styles = StyleSheet.create({
   recentScroll: { height: 42 },
   recentCard: { width: 52, height: 52, marginRight: 8, borderRadius: 10, overflow: 'hidden', backgroundColor: '#27272a' },
   recentImg: { width: 52, height: 52 },
+  playButton: { backgroundColor: '#fff', borderRadius: 22, width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: 6 },
+  playRow: { width: '100%', alignItems: 'center', marginTop: 18, marginBottom: 4 },
 });

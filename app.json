@@ -1,15 +1,18 @@
 {
   "expo": {
-    "name": "tube_final",
+    "name": "TubeDX",
     "slug": "tube_final",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/app-icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tubedx.app"
     },
     "android": {
+      "package": "com.tubedx.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/android-icon-foreground.png"
@@ -17,6 +20,9 @@
     },
     "web": {
       "favicon": "./assets/app-favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-audio"
+    ]
   }
 }
